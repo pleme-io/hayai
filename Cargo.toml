@@ -1,0 +1,31 @@
+[package]
+name = "hayai"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89.0"
+description = "Hayai (速い) — generic fast-match engine with pluggable normalizers and prefilters"
+homepage = "https://github.com/pleme-io/hayai"
+repository = "https://github.com/pleme-io/hayai"
+license = "MIT"
+categories = ["text-processing", "algorithms"]
+keywords = ["regex", "pattern-matching", "prefilter", "normalizer", "fast-match"]
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
