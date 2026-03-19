@@ -226,4 +226,33 @@ mod tests {
         assert!(cache.path.to_str().unwrap().contains("test-app"));
         assert!(cache.path.to_str().unwrap().contains("compiled.json"));
     }
+
+    #[test]
+    fn resolve_cached_error_propagation() {
+        let cache: MemCache<Vec<String>> = MemCache::empty();
+        let fp = FixedFingerprinter(1);
+        let result: anyhow::Result<Vec<String>> = resolve_cached(&cache, &fp, || {
+            Err(anyhow::anyhow!("resolution failed"))
+        });
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("resolution failed"));
+        // Cache should NOT be populated on error
+        assert!(cache.load().is_none());
+    }
+
+    #[test]
+    fn resolve_cached_multiple_misses_update_fingerprint() {
+        let cache: MemCache<Vec<String>> = MemCache::empty();
+        // First resolve with fp=1
+        let fp1 = FixedFingerprinter(1);
+        let data = resolve_cached(&cache, &fp1, || Ok(vec!["v1".to_string()])).unwrap();
+        assert_eq!(data, vec!["v1"]);
+        assert_eq!(cache.load().unwrap().0, 1);
+
+        // Second resolve with fp=2 — stale cache, re-resolves
+        let fp2 = FixedFingerprinter(2);
+        let data = resolve_cached(&cache, &fp2, || Ok(vec!["v2".to_string()])).unwrap();
+        assert_eq!(data, vec!["v2"]);
+        assert_eq!(cache.load().unwrap().0, 2);
+    }
 }
