@@ -1,19 +1,20 @@
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::{env, fs};
 
 use serde::{de::DeserializeOwned, Serialize};
 
 /// Trait for cache storage — abstracts filesystem for testability.
 ///
-/// Generic over the cached data type.
-pub trait CacheStore<T: Serialize + DeserializeOwned> {
+/// Generic over the cached data type. `Send + Sync` required for daemon use.
+pub trait CacheStore<T: Serialize + DeserializeOwned>: Send + Sync {
     fn load(&self) -> Option<(u64, T)>;
     fn save(&self, fingerprint: u64, data: &T) -> anyhow::Result<()>;
 }
 
 /// Trait for fingerprinting — abstracts input to a hash.
-pub trait Fingerprinter {
+pub trait Fingerprinter: Send + Sync {
     fn fingerprint(&self) -> u64;
 }
 
@@ -71,6 +72,14 @@ pub struct FsFingerprinter {
     pub paths: Vec<PathBuf>,
 }
 
+impl FsFingerprinter {
+    /// Convenience: create from a list of directories to scan.
+    #[must_use]
+    pub fn from_dirs(dirs: Vec<PathBuf>) -> Self {
+        Self { paths: dirs }
+    }
+}
+
 impl Fingerprinter for FsFingerprinter {
     fn fingerprint(&self) -> u64 {
         let mut hasher = std::hash::DefaultHasher::new();
@@ -97,37 +106,44 @@ impl Fingerprinter for FsFingerprinter {
     }
 }
 
-fn mtime_nanos(t: std::time::SystemTime) -> u64 {
+/// Convert a `SystemTime` to nanoseconds since UNIX epoch.
+#[must_use]
+pub fn mtime_nanos(t: std::time::SystemTime) -> u64 {
     t.duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// In-memory implementations (for testing)
+// In-memory implementations (for testing and daemon use)
 // ═══════════════════════════════════════════════════════════════════
 
-/// In-memory cache for testing.
+/// Thread-safe in-memory cache.
 pub struct MemCache<T> {
-    data: std::cell::RefCell<Option<(u64, T)>>,
+    data: Mutex<Option<(u64, T)>>,
 }
 
 impl<T> MemCache<T> {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            data: std::cell::RefCell::new(None),
+            data: Mutex::new(None),
         }
     }
 }
 
-impl<T: Serialize + DeserializeOwned + Clone> CacheStore<T> for MemCache<T> {
+impl<T: Serialize + DeserializeOwned + Clone + Send> CacheStore<T> for MemCache<T> {
     fn load(&self) -> Option<(u64, T)> {
-        self.data.borrow().clone()
+        let guard = self.data.lock().ok()?;
+        guard.clone()
     }
 
     fn save(&self, fingerprint: u64, data: &T) -> anyhow::Result<()> {
-        *self.data.borrow_mut() = Some((fingerprint, data.clone()));
+        let mut guard = self
+            .data
+            .lock()
+            .map_err(|e| anyhow::anyhow!("MemCache mutex poisoned: {e}"))?;
+        *guard = Some((fingerprint, data.clone()));
         Ok(())
     }
 }
@@ -236,20 +252,17 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("resolution failed"));
-        // Cache should NOT be populated on error
         assert!(cache.load().is_none());
     }
 
     #[test]
     fn resolve_cached_multiple_misses_update_fingerprint() {
         let cache: MemCache<Vec<String>> = MemCache::empty();
-        // First resolve with fp=1
         let fp1 = FixedFingerprinter(1);
         let data = resolve_cached(&cache, &fp1, || Ok(vec!["v1".to_string()])).unwrap();
         assert_eq!(data, vec!["v1"]);
         assert_eq!(cache.load().unwrap().0, 1);
 
-        // Second resolve with fp=2 — stale cache, re-resolves
         let fp2 = FixedFingerprinter(2);
         let data = resolve_cached(&cache, &fp2, || Ok(vec!["v2".to_string()])).unwrap();
         assert_eq!(data, vec!["v2"]);
