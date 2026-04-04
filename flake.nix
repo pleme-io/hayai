@@ -2,7 +2,7 @@
   description = "Hayai (速い) — generic fast-match engine with pluggable normalizers and prefilters";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.11";
     substrate = {
       url = "github:pleme-io/substrate";
       inputs.nixpkgs.follows = "nixpkgs";
