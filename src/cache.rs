@@ -35,17 +35,25 @@ struct CacheEntry<T> {
 }
 
 /// Filesystem-backed cache at a configurable path.
+#[derive(Debug, Clone)]
 pub struct FsCache {
     /// Path to the JSON cache file on disk.
     pub path: PathBuf,
 }
 
 impl FsCache {
+    /// Create a cache at an explicit path.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
     /// Create a cache at `~/.cache/{app_name}/compiled.json`.
     ///
     /// Respects `XDG_CACHE_HOME` when set, otherwise falls back to `$HOME/.cache`.
     #[must_use]
-    pub fn for_app(app_name: &str) -> Self {
+    pub fn for_app(app_name: impl AsRef<str>) -> Self {
+        let app_name = app_name.as_ref();
         let base = match env::var("XDG_CACHE_HOME") {
             Ok(dir) => PathBuf::from(dir),
             Err(_) => PathBuf::from(env::var("HOME").unwrap_or_default()).join(".cache"),
@@ -74,6 +82,7 @@ impl<T: Serialize + DeserializeOwned> CacheStore<T> for FsCache {
 }
 
 /// Fingerprint based on file modification times.
+#[derive(Debug, Clone)]
 pub struct FsFingerprinter {
     /// Paths (files or directories) to include in the fingerprint.
     pub paths: Vec<PathBuf>,
@@ -133,13 +142,19 @@ pub struct MemCache<T> {
     data: Mutex<Option<(u64, T)>>,
 }
 
+impl<T> Default for MemCache<T> {
+    fn default() -> Self {
+        Self {
+            data: Mutex::new(None),
+        }
+    }
+}
+
 impl<T> MemCache<T> {
     /// Create an empty in-memory cache.
     #[must_use]
     pub fn empty() -> Self {
-        Self {
-            data: Mutex::new(None),
-        }
+        Self::default()
     }
 }
 
@@ -463,5 +478,17 @@ mod tests {
             source: json_err.unwrap_err(),
         };
         assert!(err.to_string().contains("JSON error"));
+    }
+
+    #[test]
+    fn mem_cache_default() {
+        let cache: MemCache<String> = MemCache::default();
+        assert!(cache.load().is_none());
+    }
+
+    #[test]
+    fn fs_cache_new() {
+        let cache = FsCache::new("/tmp/test.json");
+        assert_eq!(cache.path, PathBuf::from("/tmp/test.json"));
     }
 }
