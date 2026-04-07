@@ -21,6 +21,7 @@ use crate::error::HayaiError;
 /// constructed once and shared across threads (e.g. behind an `Arc`).
 /// All built-in normalizers satisfy this automatically.
 pub trait Normalizer: Send + Sync {
+    /// Transform the input, returning `Cow::Borrowed` when no change is needed.
     fn normalize<'a>(&self, input: &'a str) -> Cow<'a, str>;
 }
 
@@ -40,6 +41,7 @@ pub trait Normalizer: Send + Sync {
 /// matchers that may be shared across threads. All built-in prefilters
 /// satisfy this automatically.
 pub trait Prefilter: Send + Sync {
+    /// Returns `true` if the input can be safely skipped (no DFA needed).
     fn is_safe(&self, input: &str) -> bool;
 }
 
@@ -151,7 +153,9 @@ impl Normalizer for PathNormalizer {
 /// Preserves `Cow::Borrowed` when neither normalizer transforms the input.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChainedNormalizer<A, B> {
+    /// First normalizer applied to the input.
     pub first: A,
+    /// Second normalizer applied to the result of `first`.
     pub second: B,
 }
 
@@ -264,7 +268,9 @@ impl Prefilter for KeywordPrefilter {
 /// Both prefilters must report the input as safe for the composite to skip DFA.
 #[derive(Debug, Clone)]
 pub struct CompositePrefilter<A: Prefilter, B: Prefilter> {
+    /// First prefilter to check.
     pub first: A,
+    /// Second prefilter to check (only if first reports safe).
     pub second: B,
 }
 
@@ -346,7 +352,7 @@ impl<F> fmt::Debug for FnPrefilter<F> {
 /// `needle` must be uppercase ASCII bytes.
 #[inline]
 #[must_use]
-pub fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
+pub(crate) fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
     let n = needle.len();
     if n == 0 {
         return true;

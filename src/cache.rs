@@ -19,6 +19,7 @@ pub trait CacheStore<T: Serialize + DeserializeOwned>: Send + Sync {
 
 /// Trait for fingerprinting — abstracts input to a hash.
 pub trait Fingerprinter: Send + Sync {
+    /// Compute a `u64` fingerprint representing current state.
     fn fingerprint(&self) -> u64;
 }
 
@@ -35,6 +36,7 @@ struct CacheEntry<T> {
 
 /// Filesystem-backed cache at a configurable path.
 pub struct FsCache {
+    /// Path to the JSON cache file on disk.
     pub path: PathBuf,
 }
 
@@ -73,6 +75,7 @@ impl<T: Serialize + DeserializeOwned> CacheStore<T> for FsCache {
 
 /// Fingerprint based on file modification times.
 pub struct FsFingerprinter {
+    /// Paths (files or directories) to include in the fingerprint.
     pub paths: Vec<PathBuf>,
 }
 
@@ -115,7 +118,7 @@ impl Fingerprinter for FsFingerprinter {
 /// for fingerprinting purposes (wraps every ~584 years).
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
-pub fn mtime_nanos(t: std::time::SystemTime) -> u64 {
+pub(crate) fn mtime_nanos(t: std::time::SystemTime) -> u64 {
     t.duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64
@@ -131,6 +134,7 @@ pub struct MemCache<T> {
 }
 
 impl<T> MemCache<T> {
+    /// Create an empty in-memory cache.
     #[must_use]
     pub fn empty() -> Self {
         Self {
