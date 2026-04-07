@@ -103,6 +103,17 @@ impl MatchResult {
     pub fn len(&self) -> usize {
         self.indices.len()
     }
+
+    /// Returns `true` if the given pattern index is among the matches.
+    #[must_use]
+    pub fn contains(&self, index: usize) -> bool {
+        self.indices.contains(&index)
+    }
+
+    /// Returns an iterator over the matched pattern indices.
+    pub fn iter(&self) -> impl Iterator<Item = &usize> {
+        self.indices.iter()
+    }
 }
 
 impl fmt::Display for MatchResult {
@@ -118,6 +129,24 @@ impl fmt::Display for MatchResult {
 impl From<Vec<usize>> for MatchResult {
     fn from(indices: Vec<usize>) -> Self {
         Self { indices }
+    }
+}
+
+impl IntoIterator for MatchResult {
+    type Item = usize;
+    type IntoIter = std::vec::IntoIter<usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.indices.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a MatchResult {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.indices.iter()
     }
 }
 
@@ -828,6 +857,35 @@ mod tests {
         let debug = format!("{r:?}");
         assert!(debug.contains("MatchResult"));
         assert!(debug.contains("indices"));
+    }
+
+    #[test]
+    fn match_result_contains() {
+        let r = MatchResult::from(vec![0, 3, 7]);
+        assert!(r.contains(0));
+        assert!(r.contains(3));
+        assert!(!r.contains(1));
+    }
+
+    #[test]
+    fn match_result_iter() {
+        let r = MatchResult::from(vec![1, 2, 3]);
+        let collected: Vec<_> = r.iter().copied().collect();
+        assert_eq!(collected, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn match_result_into_iter() {
+        let r = MatchResult::from(vec![4, 5]);
+        let collected: Vec<usize> = r.into_iter().collect();
+        assert_eq!(collected, vec![4, 5]);
+    }
+
+    #[test]
+    fn match_result_ref_into_iter() {
+        let r = MatchResult::from(vec![6, 7]);
+        let collected: Vec<_> = (&r).into_iter().copied().collect();
+        assert_eq!(collected, vec![6, 7]);
     }
 
     #[test]
