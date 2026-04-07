@@ -260,20 +260,13 @@ impl PrefixPrefilter {
 
 impl Prefilter for PrefixPrefilter {
     fn is_safe(&self, input: &str) -> bool {
-        for (count, word) in input.split_whitespace().enumerate() {
-            if count >= self.max_words {
-                break;
-            }
-            if self.prefixes.contains(word)
-                || self
-                    .prefixes
-                    .iter()
-                    .any(|p| word.starts_with(p.as_str()))
-            {
-                return false;
-            }
-        }
-        true
+        !input
+            .split_whitespace()
+            .take(self.max_words)
+            .any(|word| {
+                self.prefixes.contains(word)
+                    || self.prefixes.iter().any(|p| word.starts_with(p.as_str()))
+            })
     }
 }
 
@@ -436,7 +429,11 @@ impl RegexMatcher {
     ///
     /// # Errors
     /// Returns [`HayaiError::InvalidPattern`] if any regex pattern is invalid.
-    pub fn new(patterns: &[String]) -> Result<Self, HayaiError> {
+    pub fn new<I, S>(patterns: I) -> Result<Self, HayaiError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         Self::with_plugins(patterns, IdentityNormalizer, NullPrefilter)
     }
 }
@@ -446,13 +443,21 @@ impl<N: Normalizer, P: Prefilter> RegexMatcher<N, P> {
     ///
     /// # Errors
     /// Returns [`HayaiError::InvalidPattern`] if any regex pattern is invalid.
-    pub fn with_plugins(
-        patterns: &[String],
+    pub fn with_plugins<I, S>(
+        patterns: I,
         normalizer: N,
         prefilter: P,
-    ) -> Result<Self, HayaiError> {
+    ) -> Result<Self, HayaiError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let patterns: Vec<String> = patterns
+            .into_iter()
+            .map(|s| s.as_ref().to_owned())
+            .collect();
         let count = patterns.len();
-        let set = RegexSetBuilder::new(patterns)
+        let set = RegexSetBuilder::new(&patterns)
             .size_limit(100 * 1024 * 1024)
             .build()?;
         Ok(Self {
@@ -983,6 +988,12 @@ mod tests {
         let err = RegexMatcher::new(&patterns).unwrap_err();
         assert_matches!(err, HayaiError::InvalidPattern { .. });
         assert!(err.to_string().contains("invalid regex"));
+    }
+
+    #[test]
+    fn matcher_accepts_str_slices() {
+        let matcher = RegexMatcher::new(["rm", "ls"]).unwrap();
+        assert_eq!(matcher.pattern_count(), 2);
     }
 
     #[test]
