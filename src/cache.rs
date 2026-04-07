@@ -283,4 +283,185 @@ mod tests {
         assert_eq!(data, vec!["v2"]);
         assert_eq!(cache.load().unwrap().0, 2);
     }
+
+    // ── FsCache with tempfile ─────────────────────────────────────
+
+    #[test]
+    fn fs_cache_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FsCache {
+            path: dir.path().join("cache.json"),
+        };
+        let data = vec!["hello".to_string(), "world".to_string()];
+        cache.save(42, &data).unwrap();
+
+        let (fp, loaded) = CacheStore::<Vec<String>>::load(&cache).unwrap();
+        assert_eq!(fp, 42);
+        assert_eq!(loaded, data);
+    }
+
+    #[test]
+    fn fs_cache_load_missing_file_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FsCache {
+            path: dir.path().join("nonexistent.json"),
+        };
+        assert!(CacheStore::<Vec<String>>::load(&cache).is_none());
+    }
+
+    #[test]
+    fn fs_cache_load_invalid_json_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, b"not json").unwrap();
+        let cache = FsCache { path };
+        assert!(CacheStore::<Vec<String>>::load(&cache).is_none());
+    }
+
+    #[test]
+    fn fs_cache_overwrite_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FsCache {
+            path: dir.path().join("cache.json"),
+        };
+        cache.save(1, &vec!["v1".to_string()]).unwrap();
+        cache.save(2, &vec!["v2".to_string()]).unwrap();
+
+        let (fp, data) = CacheStore::<Vec<String>>::load(&cache).unwrap();
+        assert_eq!(fp, 2);
+        assert_eq!(data, vec!["v2"]);
+    }
+
+    #[test]
+    fn fs_cache_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FsCache {
+            path: dir.path().join("a").join("b").join("c").join("cache.json"),
+        };
+        cache.save(1, &"data".to_string()).unwrap();
+        let (fp, data) = CacheStore::<String>::load(&cache).unwrap();
+        assert_eq!(fp, 1);
+        assert_eq!(data, "data");
+    }
+
+    // ── FsFingerprinter tests ─────────────────────────────────────
+
+    #[test]
+    fn fs_fingerprinter_empty_paths() {
+        let fp = FsFingerprinter::from_dirs(vec![]);
+        let h = fp.fingerprint();
+        let h2 = fp.fingerprint();
+        assert_eq!(h, h2, "deterministic for same inputs");
+    }
+
+    #[test]
+    fn fs_fingerprinter_file_changes_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        std::fs::write(&file, b"v1").unwrap();
+
+        let fp = FsFingerprinter {
+            paths: vec![file.clone()],
+        };
+        let h1 = fp.fingerprint();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&file, b"v2").unwrap();
+        let h2 = fp.fingerprint();
+
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn fs_fingerprinter_missing_path_still_works() {
+        let fp = FsFingerprinter {
+            paths: vec![PathBuf::from("/nonexistent/path/12345")],
+        };
+        let _ = fp.fingerprint();
+    }
+
+    #[test]
+    fn fs_fingerprinter_directory_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        std::fs::write(dir.path().join("b.txt"), b"b").unwrap();
+
+        let fp = FsFingerprinter::from_dirs(vec![dir.path().to_path_buf()]);
+        let h1 = fp.fingerprint();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(dir.path().join("c.txt"), b"c").unwrap();
+        let h2 = fp.fingerprint();
+
+        assert_ne!(h1, h2);
+    }
+
+    // ── mtime_nanos tests ─────────────────────────────────────────
+
+    #[test]
+    fn mtime_nanos_unix_epoch_is_zero() {
+        assert_eq!(mtime_nanos(std::time::UNIX_EPOCH), 0);
+    }
+
+    #[test]
+    fn mtime_nanos_positive_for_now() {
+        assert!(mtime_nanos(std::time::SystemTime::now()) > 0);
+    }
+
+    // ── MemCache thread safety ────────────────────────────────────
+
+    #[test]
+    fn mem_cache_save_load_cycle() {
+        let cache = MemCache::empty();
+        assert!(CacheStore::<String>::load(&cache).is_none());
+        cache.save(1, &"hello".to_string()).unwrap();
+        let (fp, data) = CacheStore::<String>::load(&cache).unwrap();
+        assert_eq!(fp, 1);
+        assert_eq!(data, "hello");
+    }
+
+    // ── resolve_cached with FsCache ───────────────────────────────
+
+    #[test]
+    fn resolve_cached_with_fs_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FsCache {
+            path: dir.path().join("cache.json"),
+        };
+        let fp = FixedFingerprinter(100);
+        let data: Vec<String> =
+            resolve_cached(&cache, &fp, || Ok(vec!["resolved".to_string()])).unwrap();
+        assert_eq!(data, vec!["resolved"]);
+
+        let data2: Vec<String> =
+            resolve_cached(&cache, &fp, || panic!("should not resolve again")).unwrap();
+        assert_eq!(data2, vec!["resolved"]);
+    }
+
+    // ── HayaiError display ────────────────────────────────────────
+
+    #[test]
+    fn hayai_error_mutex_poisoned_display() {
+        let err = HayaiError::MutexPoisoned {
+            context: "test mutex".into(),
+        };
+        assert!(err.to_string().contains("test mutex"));
+    }
+
+    #[test]
+    fn hayai_error_io_display() {
+        let err = HayaiError::Io {
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        assert!(err.to_string().contains("I/O error"));
+    }
+
+    #[test]
+    fn hayai_error_json_display() {
+        let json_err: Result<serde_json::Value, _> = serde_json::from_str("{invalid");
+        let err = HayaiError::Json {
+            source: json_err.unwrap_err(),
+        };
+        assert!(err.to_string().contains("JSON error"));
+    }
 }

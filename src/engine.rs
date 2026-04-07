@@ -441,6 +441,8 @@ impl<N: Normalizer, P: Prefilter> MatchEngine for RegexMatcher<N, P> {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+
     use super::*;
 
     // ── Normalizer tests ─────────────────────────────────────────
@@ -883,5 +885,194 @@ mod tests {
         assert!(matcher.check("ls -la").is_empty());
         assert_eq!(matcher.check("rm -rf /"), vec![0]);
         assert_eq!(matcher.check("echo DROP TABLE users"), vec![1]);
+    }
+
+    // ── Error type tests ──────────────────────────────────────────
+
+    #[test]
+    fn matcher_invalid_regex_returns_invalid_pattern() {
+        let patterns = vec!["[invalid".to_string()];
+        let err = RegexMatcher::new(&patterns).unwrap_err();
+        assert_matches!(err, HayaiError::InvalidPattern { .. });
+        assert!(err.to_string().contains("invalid regex"));
+    }
+
+    #[test]
+    fn matcher_empty_pattern_set() {
+        let patterns: Vec<String> = vec![];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        assert_eq!(matcher.pattern_count(), 0);
+        assert!(matcher.check("anything").is_empty());
+    }
+
+    // ── PrefixPrefilter edge cases ────────────────────────────────
+
+    #[test]
+    fn prefix_prefilter_empty_input() {
+        let p = PrefixPrefilter::new(["rm"], 3);
+        assert!(p.is_safe(""));
+    }
+
+    #[test]
+    fn prefix_prefilter_max_words_zero() {
+        let p = PrefixPrefilter::new(["rm"], 0);
+        assert!(p.is_safe("rm -rf /"));
+    }
+
+    #[test]
+    fn prefix_prefilter_partial_prefix_match() {
+        let p = PrefixPrefilter::new(["git"], 3);
+        assert!(!p.is_safe("git-lfs pull"));
+    }
+
+    #[test]
+    fn prefix_prefilter_word_beyond_max_words() {
+        let p = PrefixPrefilter::new(["dangerous"], 2);
+        assert!(p.is_safe("safe safe dangerous"));
+    }
+
+    #[test]
+    fn prefix_prefilter_empty_set() {
+        let p = PrefixPrefilter::new(Vec::<String>::new(), 3);
+        assert!(p.is_safe("rm -rf /"));
+    }
+
+    #[test]
+    fn prefix_prefilter_prefix_set_accessor() {
+        let p = PrefixPrefilter::new(["rm", "git"], 3);
+        assert!(p.prefix_set().contains("rm"));
+        assert!(p.prefix_set().contains("git"));
+        assert_eq!(p.prefix_set().len(), 2);
+    }
+
+    // ── KeywordPrefilter edge cases ───────────────────────────────
+
+    #[test]
+    fn keyword_prefilter_empty_input() {
+        let p = KeywordPrefilter::new([b"DROP ".to_vec()]);
+        assert!(p.is_safe(""));
+    }
+
+    #[test]
+    fn keyword_prefilter_empty_keywords() {
+        let p = KeywordPrefilter::new(Vec::<Vec<u8>>::new());
+        assert!(p.is_safe("DROP TABLE users"));
+    }
+
+    #[test]
+    fn keyword_prefilter_mixed_case_match() {
+        let p = KeywordPrefilter::new([b"DELETE".to_vec()]);
+        assert!(!p.is_safe("please delete this"));
+        assert!(!p.is_safe("please DELETE this"));
+        assert!(!p.is_safe("please DeLeTe this"));
+    }
+
+    // ── ChainedNormalizer edge cases ──────────────────────────────
+
+    #[test]
+    fn chained_normalizer_both_transform() {
+        let n = ChainedNormalizer {
+            first: PathNormalizer,
+            second: FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
+        };
+        let result = n.normalize("/usr/bin/hello world");
+        assert_eq!(&*result, "HELLO WORLD");
+    }
+
+    #[test]
+    fn chained_normalizer_second_only_transforms() {
+        let n = ChainedNormalizer {
+            first: IdentityNormalizer,
+            second: FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
+        };
+        let result = n.normalize("hello");
+        assert_eq!(&*result, "HELLO");
+    }
+
+    // ── MatchResult clone ─────────────────────────────────────────
+
+    #[test]
+    fn match_result_clone() {
+        let r = MatchResult::from(vec![1, 2, 3]);
+        let cloned = r.clone();
+        assert_eq!(r, cloned);
+    }
+
+    // ── proptest ──────────────────────────────────────────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::collection;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn contains_ascii_ci_never_panics(
+                haystack in ".*",
+                needle in "[A-Z ]{0,10}"
+            ) {
+                let _ = contains_ascii_ci(haystack.as_bytes(), needle.as_bytes());
+            }
+
+            #[test]
+            fn contains_ascii_ci_agrees_with_naive(
+                haystack in "[a-zA-Z0-9 ]{0,50}",
+                needle in "[A-Z]{1,5}"
+            ) {
+                let expected = haystack.to_uppercase().contains(&needle);
+                let result = contains_ascii_ci(haystack.as_bytes(), needle.as_bytes());
+                prop_assert_eq!(result, expected);
+            }
+
+            #[test]
+            fn identity_normalizer_always_borrows(input in ".*") {
+                let n = IdentityNormalizer;
+                let result = n.normalize(&input);
+                prop_assert!(matches!(result, Cow::Borrowed(_)));
+                prop_assert_eq!(&*result, &input);
+            }
+
+            #[test]
+            fn path_normalizer_idempotent(input in ".*") {
+                let n = PathNormalizer;
+                let once = n.normalize(&input).into_owned();
+                let twice = n.normalize(&once).into_owned();
+                prop_assert_eq!(once, twice);
+            }
+
+            #[test]
+            fn null_prefilter_always_unsafe(input in ".*") {
+                let p = NullPrefilter;
+                prop_assert!(!p.is_safe(&input));
+            }
+
+            #[test]
+            fn matcher_never_panics_on_arbitrary_input(input in "\\PC{0,200}") {
+                let patterns = vec![r"rm\s+-rf".to_string(), r"DROP\s+TABLE".to_string()];
+                let matcher = RegexMatcher::new(&patterns).unwrap();
+                let _ = matcher.check(&input);
+            }
+
+            #[test]
+            fn match_result_len_equals_indices_len(indices in collection::vec(0..100usize, 0..20)) {
+                let r = MatchResult::from(indices.clone());
+                prop_assert_eq!(r.len(), indices.len());
+                prop_assert_eq!(r.is_empty(), indices.is_empty());
+                prop_assert_eq!(r.matched_any(), !indices.is_empty());
+                prop_assert_eq!(r.first(), indices.first().copied());
+            }
+
+            #[test]
+            fn prefix_prefilter_safe_implies_no_prefix_match(
+                prefix in "[a-z]{1,5}",
+                input in "[a-z]{6,20}"
+            ) {
+                let p = PrefixPrefilter::new([prefix.clone()], 1);
+                if p.is_safe(&input) {
+                    let first_word = input.split_whitespace().next().unwrap_or("");
+                    prop_assert!(!first_word.starts_with(&prefix));
+                }
+            }
+        }
     }
 }
