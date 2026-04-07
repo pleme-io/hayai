@@ -164,6 +164,10 @@ impl Normalizer for IdentityNormalizer {
     }
 }
 
+// TODO(scope): `?` is unavailable inside `LazyLock`; this regex is a
+// compile-time constant and cannot fail, but a `regex_static!` macro or
+// `OnceLock` with a fallible init would let us remove the `unwrap`.
+#[allow(clippy::unwrap_used)]
 static PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(
         r"(?:/nix/store/[a-z0-9]+-[^/]+/bin/|/usr/local/bin/|/usr/bin/|/bin/|/sbin/)",
