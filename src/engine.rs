@@ -58,8 +58,10 @@ pub trait Prefilter: Send + Sync {
 /// prefilter are.
 pub trait MatchEngine {
     /// Check input against patterns. Returns indices of matched patterns.
+    #[must_use]
     fn check(&self, input: &str) -> Vec<usize>;
     /// Number of patterns in the engine.
+    #[must_use]
     fn pattern_count(&self) -> usize;
 }
 
@@ -71,7 +73,7 @@ pub trait MatchEngine {
 ///
 /// Wraps the raw `Vec<usize>` of matched pattern indices with
 /// convenience methods for common checks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MatchResult {
     /// Indices of matched patterns.
     pub indices: Vec<usize>,
@@ -100,6 +102,16 @@ impl MatchResult {
     #[must_use]
     pub fn len(&self) -> usize {
         self.indices.len()
+    }
+}
+
+impl fmt::Display for MatchResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.indices.is_empty() {
+            f.write_str("no matches")
+        } else {
+            write!(f, "{} match(es): {:?}", self.indices.len(), self.indices)
+        }
     }
 }
 
@@ -816,6 +828,24 @@ mod tests {
         let debug = format!("{r:?}");
         assert!(debug.contains("MatchResult"));
         assert!(debug.contains("indices"));
+    }
+
+    #[test]
+    fn match_result_default() {
+        let r = MatchResult::default();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+    }
+
+    #[test]
+    fn match_result_display() {
+        let empty = MatchResult::default();
+        assert_eq!(format!("{empty}"), "no matches");
+
+        let matched = MatchResult::from(vec![0, 3]);
+        let display = format!("{matched}");
+        assert!(display.contains("2 match(es)"));
+        assert!(display.contains("[0, 3]"));
     }
 
     // ── Performance edge cases ───────────────────────────────────

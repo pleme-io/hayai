@@ -2,6 +2,7 @@
 
 /// Errors that can occur when building or using hayai components.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HayaiError {
     /// One or more regex patterns in the set are invalid.
     #[error("invalid regex in pattern set: {source}")]
