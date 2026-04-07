@@ -209,6 +209,51 @@ pub fn resolve_cached<T: Serialize + DeserializeOwned>(
     Ok(data)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Test mocks
+// ═══════════════════════════════════════════════════════════════════
+
+/// A mock cache store for testing consumer code that depends on
+/// [`CacheStore`]. Wraps [`MemCache`] but allows injecting save failures.
+#[cfg(test)]
+pub struct MockCacheStore<T: Clone + Send> {
+    inner: MemCache<T>,
+    pub fail_saves: bool,
+}
+
+#[cfg(test)]
+impl<T: Clone + Send> MockCacheStore<T> {
+    pub fn new() -> Self {
+        Self {
+            inner: MemCache::empty(),
+            fail_saves: false,
+        }
+    }
+
+    pub fn failing() -> Self {
+        Self {
+            inner: MemCache::empty(),
+            fail_saves: true,
+        }
+    }
+}
+
+#[cfg(test)]
+impl<T: Serialize + DeserializeOwned + Clone + Send + Sync> CacheStore<T> for MockCacheStore<T> {
+    fn load(&self) -> Option<(u64, T)> {
+        self.inner.load()
+    }
+
+    fn save(&self, fingerprint: u64, data: &T) -> Result<(), HayaiError> {
+        if self.fail_saves {
+            return Err(HayaiError::MutexPoisoned {
+                context: "mock save failure".into(),
+            });
+        }
+        self.inner.save(fingerprint, data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +523,32 @@ mod tests {
             source: json_err.unwrap_err(),
         };
         assert!(err.to_string().contains("JSON error"));
+    }
+
+    #[test]
+    fn mock_cache_store_normal() {
+        let store: MockCacheStore<Vec<String>> = MockCacheStore::new();
+        assert!(store.load().is_none());
+        store.save(1, &vec!["a".into()]).unwrap();
+        let (fp, data) = store.load().unwrap();
+        assert_eq!(fp, 1);
+        assert_eq!(data, vec!["a"]);
+    }
+
+    #[test]
+    fn mock_cache_store_failing() {
+        let store: MockCacheStore<Vec<String>> = MockCacheStore::failing();
+        let err = store.save(1, &vec!["a".into()]).unwrap_err();
+        assert!(err.to_string().contains("mock save failure"));
+    }
+
+    #[test]
+    fn resolve_cached_with_failing_save_still_returns_data() {
+        let store: MockCacheStore<Vec<String>> = MockCacheStore::failing();
+        let fp = FixedFingerprinter(1);
+        let data = resolve_cached(&store, &fp, || Ok(vec!["ok".into()])).unwrap();
+        assert_eq!(data, vec!["ok"]);
+        assert!(store.load().is_none());
     }
 
     #[test]

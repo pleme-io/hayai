@@ -485,6 +485,86 @@ impl<N: Normalizer, P: Prefilter> MatchEngine for RegexMatcher<N, P> {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Test mocks — available under `#[cfg(test)]`
+// ═══════════════════════════════════════════════════════════════════
+
+/// A configurable mock for [`MatchEngine`], useful for testing code
+/// that consumes matchers without building a real regex set.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct MockMatchEngine {
+    pub results: Vec<usize>,
+    pub count: usize,
+}
+
+#[cfg(test)]
+impl MockMatchEngine {
+    pub fn new(results: Vec<usize>, count: usize) -> Self {
+        Self { results, count }
+    }
+
+    pub fn empty(count: usize) -> Self {
+        Self {
+            results: Vec::new(),
+            count,
+        }
+    }
+}
+
+#[cfg(test)]
+impl MatchEngine for MockMatchEngine {
+    fn check(&self, _input: &str) -> Vec<usize> {
+        self.results.clone()
+    }
+
+    fn pattern_count(&self) -> usize {
+        self.count
+    }
+}
+
+/// A mock normalizer that applies an optional transform.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct MockNormalizer {
+    pub transform: Option<fn(&str) -> String>,
+}
+
+#[cfg(test)]
+impl MockNormalizer {
+    pub fn identity() -> Self {
+        Self { transform: None }
+    }
+
+    pub fn with_transform(f: fn(&str) -> String) -> Self {
+        Self { transform: Some(f) }
+    }
+}
+
+#[cfg(test)]
+impl Normalizer for MockNormalizer {
+    fn normalize<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        match self.transform {
+            Some(f) => Cow::Owned(f(input)),
+            None => Cow::Borrowed(input),
+        }
+    }
+}
+
+/// A mock prefilter that returns a fixed value.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+pub struct MockPrefilter {
+    pub always_safe: bool,
+}
+
+#[cfg(test)]
+impl Prefilter for MockPrefilter {
+    fn is_safe(&self, _input: &str) -> bool {
+        self.always_safe
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
@@ -1095,6 +1175,58 @@ mod tests {
         let r = MatchResult::from(vec![1, 2, 3]);
         let cloned = r.clone();
         assert_eq!(r, cloned);
+    }
+
+    // ── Mock tests ───────────────────────────────────────────────
+
+    #[test]
+    fn mock_match_engine_returns_configured() {
+        let mock = MockMatchEngine::new(vec![0, 2], 5);
+        assert_eq!(mock.check("anything"), vec![0, 2]);
+        assert_eq!(mock.pattern_count(), 5);
+    }
+
+    #[test]
+    fn mock_match_engine_empty() {
+        let mock = MockMatchEngine::empty(10);
+        assert!(mock.check("anything").is_empty());
+        assert_eq!(mock.pattern_count(), 10);
+    }
+
+    #[test]
+    fn mock_normalizer_identity() {
+        let n = MockNormalizer::identity();
+        let result = n.normalize("hello");
+        assert!(matches!(result, Cow::Borrowed("hello")));
+    }
+
+    #[test]
+    fn mock_normalizer_transform() {
+        let n = MockNormalizer::with_transform(|s| s.to_uppercase());
+        assert_eq!(&*n.normalize("hello"), "HELLO");
+    }
+
+    #[test]
+    fn mock_prefilter_always_safe() {
+        let p = MockPrefilter { always_safe: true };
+        assert!(p.is_safe("anything"));
+    }
+
+    #[test]
+    fn mock_prefilter_never_safe() {
+        let p = MockPrefilter { always_safe: false };
+        assert!(!p.is_safe("anything"));
+    }
+
+    #[test]
+    fn mock_prefilter_in_regex_matcher() {
+        let matcher = RegexMatcher::with_plugins(
+            ["rm"],
+            IdentityNormalizer,
+            MockPrefilter { always_safe: true },
+        )
+        .unwrap();
+        assert!(matcher.check("rm -rf /").is_empty());
     }
 
     // ── proptest ──────────────────────────────────────────────────
