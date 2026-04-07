@@ -5,6 +5,8 @@ use std::sync::LazyLock;
 
 use regex::{RegexSet, RegexSetBuilder};
 
+use crate::error::HayaiError;
+
 // ═══════════════════════════════════════════════════════════════════
 // Trait: Normalizer — pluggable input preprocessing
 // ═══════════════════════════════════════════════════════════════════
@@ -213,8 +215,7 @@ impl PrefixPrefilter {
 
 impl Prefilter for PrefixPrefilter {
     fn is_safe(&self, input: &str) -> bool {
-        let mut count = 0;
-        for word in input.split_whitespace() {
+        for (count, word) in input.split_whitespace().enumerate() {
             if count >= self.max_words {
                 break;
             }
@@ -226,7 +227,6 @@ impl Prefilter for PrefixPrefilter {
             {
                 return false;
             }
-            count += 1;
         }
         true
     }
@@ -345,6 +345,7 @@ impl<F> fmt::Debug for FnPrefilter<F> {
 /// Case-insensitive ASCII substring search without allocation.
 /// `needle` must be uppercase ASCII bytes.
 #[inline]
+#[must_use]
 pub fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
     let n = needle.len();
     if n == 0 {
@@ -379,7 +380,7 @@ impl<N: Normalizer + fmt::Debug, P: Prefilter + fmt::Debug> fmt::Debug for Regex
             .field("pattern_count", &self.pattern_count)
             .field("normalizer", &self.normalizer)
             .field("prefilter", &self.prefilter)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -387,8 +388,8 @@ impl RegexMatcher {
     /// Create a matcher with default normalizer and prefilter.
     ///
     /// # Errors
-    /// Returns an error if any regex pattern is invalid.
-    pub fn new(patterns: Vec<String>) -> anyhow::Result<Self> {
+    /// Returns [`HayaiError::InvalidPattern`] if any regex pattern is invalid.
+    pub fn new(patterns: &[String]) -> Result<Self, HayaiError> {
         Self::with_plugins(patterns, IdentityNormalizer, NullPrefilter)
     }
 }
@@ -397,13 +398,16 @@ impl<N: Normalizer, P: Prefilter> RegexMatcher<N, P> {
     /// Create a matcher with custom normalizer and prefilter.
     ///
     /// # Errors
-    /// Returns an error if any regex pattern is invalid.
-    pub fn with_plugins(patterns: Vec<String>, normalizer: N, prefilter: P) -> anyhow::Result<Self> {
+    /// Returns [`HayaiError::InvalidPattern`] if any regex pattern is invalid.
+    pub fn with_plugins(
+        patterns: &[String],
+        normalizer: N,
+        prefilter: P,
+    ) -> Result<Self, HayaiError> {
         let count = patterns.len();
-        let set = RegexSetBuilder::new(&patterns)
+        let set = RegexSetBuilder::new(patterns)
             .size_limit(100 * 1024 * 1024)
-            .build()
-            .map_err(|e| anyhow::anyhow!("invalid regex in pattern set: {e}"))?;
+            .build()?;
         Ok(Self {
             set,
             pattern_count: count,
@@ -575,7 +579,7 @@ mod tests {
     #[test]
     fn matcher_basic_match() {
         let patterns = vec![r"rm\s+-rf".to_string(), r"DROP\s+TABLE".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         let matches = matcher.check("rm -rf /");
         assert_eq!(matches, vec![0]);
     }
@@ -583,7 +587,7 @@ mod tests {
     #[test]
     fn matcher_no_match() {
         let patterns = vec![r"rm\s+-rf".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         let matches = matcher.check("ls -la");
         assert!(matches.is_empty());
     }
@@ -591,7 +595,7 @@ mod tests {
     #[test]
     fn matcher_multiple_matches() {
         let patterns = vec![r"rm".to_string(), r"-rf".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         let matches = matcher.check("rm -rf /");
         assert_eq!(matches.len(), 2);
     }
@@ -600,7 +604,7 @@ mod tests {
     fn matcher_with_path_normalizer() {
         let patterns = vec![r"^rm\s+-rf".to_string()];
         let matcher =
-            RegexMatcher::with_plugins(patterns, PathNormalizer, NullPrefilter).unwrap();
+            RegexMatcher::with_plugins(&patterns, PathNormalizer, NullPrefilter).unwrap();
         let matches = matcher.check("/usr/bin/rm -rf /");
         assert_eq!(matches, vec![0]);
     }
@@ -609,15 +613,13 @@ mod tests {
     fn matcher_with_prefilter_skips() {
         let patterns = vec![r"rm\s+-rf".to_string()];
         let matcher = RegexMatcher::with_plugins(
-            patterns,
+            &patterns,
             IdentityNormalizer,
             PrefixPrefilter::new(["rm"], 3),
         )
         .unwrap();
-        // "ls" is safe, skips DFA
         let matches = matcher.check("ls -la");
         assert!(matches.is_empty());
-        // "rm" is dangerous, runs DFA
         let matches = matcher.check("rm -rf /");
         assert_eq!(matches, vec![0]);
     }
@@ -625,26 +627,27 @@ mod tests {
     #[test]
     fn matcher_invalid_regex_rejected() {
         let patterns = vec!["[invalid".to_string()];
-        assert!(RegexMatcher::new(patterns).is_err());
+        assert!(RegexMatcher::new(&patterns).is_err());
     }
 
     #[test]
     fn matcher_pattern_count() {
         let patterns = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         assert_eq!(matcher.pattern_count(), 3);
     }
 
     #[test]
     fn matcher_empty_input() {
         let patterns = vec![r"rm\s+-rf".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         assert!(matcher.check("").is_empty());
     }
 
     #[test]
     fn matcher_debug_impl() {
-        let matcher = RegexMatcher::new(vec!["test".to_string()]).unwrap();
+        let patterns = vec!["test".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         let debug = format!("{matcher:?}");
         assert!(debug.contains("RegexMatcher"));
         assert!(debug.contains("pattern_count"));
@@ -726,7 +729,7 @@ mod tests {
     fn fn_normalizer_in_matcher() {
         let patterns = vec![r"HELLO".to_string()];
         let matcher = RegexMatcher::with_plugins(
-            patterns,
+            &patterns,
             FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
             NullPrefilter,
         )
@@ -754,14 +757,12 @@ mod tests {
     fn fn_prefilter_in_matcher() {
         let patterns = vec![r"rm\s+-rf".to_string()];
         let matcher = RegexMatcher::with_plugins(
-            patterns,
+            &patterns,
             IdentityNormalizer,
             FnPrefilter(|s: &str| !s.starts_with("rm")),
         )
         .unwrap();
-        // "ls -la" starts with "ls", not "rm", so closure returns true (safe)
         assert!(matcher.check("ls -la").is_empty());
-        // "rm -rf /" starts with "rm", closure returns false (not safe), DFA runs
         assert_eq!(matcher.check("rm -rf /"), vec![0]);
     }
 
@@ -813,9 +814,8 @@ mod tests {
 
     #[test]
     fn matcher_large_pattern_set() {
-        // Use word boundaries to avoid substring matches (e.g. "pattern_5" matching "pattern_500")
         let patterns: Vec<String> = (0..1000).map(|i| format!(r"\bpattern_{i}\b")).collect();
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         assert_eq!(matcher.pattern_count(), 1000);
         assert!(matcher.check("no match here").is_empty());
         assert_eq!(matcher.check("pattern_500"), vec![500]);
@@ -824,14 +824,14 @@ mod tests {
     #[test]
     fn matcher_unicode_input() {
         let patterns = vec!["caf\u{00e9}".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         assert_eq!(matcher.check("I love caf\u{00e9}"), vec![0]);
     }
 
     #[test]
     fn matcher_unicode_no_match() {
         let patterns = vec!["caf\u{00e9}".to_string()];
-        let matcher = RegexMatcher::new(patterns).unwrap();
+        let matcher = RegexMatcher::new(&patterns).unwrap();
         assert!(matcher.check("I love cafe").is_empty());
     }
 
@@ -872,12 +872,10 @@ mod tests {
             first: PrefixPrefilter::new(["rm", "psql"], 3),
             second: KeywordPrefilter::new([b"DROP ".to_vec()]),
         };
-        let matcher = RegexMatcher::with_plugins(patterns, IdentityNormalizer, composite).unwrap();
-        // "ls -la" — both prefilters agree it's safe
+        let matcher =
+            RegexMatcher::with_plugins(&patterns, IdentityNormalizer, composite).unwrap();
         assert!(matcher.check("ls -la").is_empty());
-        // "rm -rf /" — prefix catches it
         assert_eq!(matcher.check("rm -rf /"), vec![0]);
-        // "echo DROP TABLE" — keyword catches it, prefix misses
         assert_eq!(matcher.check("echo DROP TABLE users"), vec![1]);
     }
 }

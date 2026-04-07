@@ -19,7 +19,7 @@ missing_panics_doc = "allow"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-anyhow = "1"
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"

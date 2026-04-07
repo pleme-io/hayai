@@ -5,12 +5,16 @@ use std::{env, fs};
 
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::error::HayaiError;
+
 /// Trait for cache storage — abstracts filesystem for testability.
 ///
 /// Generic over the cached data type. `Send + Sync` required for daemon use.
 pub trait CacheStore<T: Serialize + DeserializeOwned>: Send + Sync {
+    /// Load the cached data along with its fingerprint, if present.
     fn load(&self) -> Option<(u64, T)>;
-    fn save(&self, fingerprint: u64, data: &T) -> anyhow::Result<()>;
+    /// Persist data under the given fingerprint.
+    fn save(&self, fingerprint: u64, data: &T) -> Result<(), HayaiError>;
 }
 
 /// Trait for fingerprinting — abstracts input to a hash.
@@ -36,16 +40,16 @@ pub struct FsCache {
 
 impl FsCache {
     /// Create a cache at `~/.cache/{app_name}/compiled.json`.
+    ///
+    /// Respects `XDG_CACHE_HOME` when set, otherwise falls back to `$HOME/.cache`.
     #[must_use]
     pub fn for_app(app_name: &str) -> Self {
+        let base = match env::var("XDG_CACHE_HOME") {
+            Ok(dir) => PathBuf::from(dir),
+            Err(_) => PathBuf::from(env::var("HOME").unwrap_or_default()).join(".cache"),
+        };
         Self {
-            path: env::var("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    PathBuf::from(env::var("HOME").unwrap_or_default()).join(".cache")
-                })
-                .join(app_name)
-                .join("compiled.json"),
+            path: base.join(app_name).join("compiled.json"),
         }
     }
 }
@@ -57,7 +61,7 @@ impl<T: Serialize + DeserializeOwned> CacheStore<T> for FsCache {
         Some((entry.fingerprint, entry.data))
     }
 
-    fn save(&self, fingerprint: u64, data: &T) -> anyhow::Result<()> {
+    fn save(&self, fingerprint: u64, data: &T) -> Result<(), HayaiError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -84,20 +88,19 @@ impl Fingerprinter for FsFingerprinter {
     fn fingerprint(&self) -> u64 {
         let mut hasher = std::hash::DefaultHasher::new();
         for path in &self.paths {
-            if let Ok(meta) = fs::metadata(path) {
-                if let Ok(mtime) = meta.modified() {
-                    mtime_nanos(mtime).hash(&mut hasher);
-                }
+            if let Ok(meta) = fs::metadata(path)
+                && let Ok(mtime) = meta.modified()
+            {
+                mtime_nanos(mtime).hash(&mut hasher);
             }
-            // Also scan directories
-            if path.is_dir() {
-                if let Ok(entries) = fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        if let Ok(meta) = entry.metadata() {
-                            if let Ok(mtime) = meta.modified() {
-                                mtime_nanos(mtime).hash(&mut hasher);
-                            }
-                        }
+            if path.is_dir()
+                && let Ok(entries) = fs::read_dir(path)
+            {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata()
+                        && let Ok(mtime) = meta.modified()
+                    {
+                        mtime_nanos(mtime).hash(&mut hasher);
                     }
                 }
             }
@@ -106,8 +109,12 @@ impl Fingerprinter for FsFingerprinter {
     }
 }
 
-/// Convert a `SystemTime` to nanoseconds since UNIX epoch.
+/// Convert a `SystemTime` to a `u64` hash-friendly representation.
+///
+/// Uses nanosecond precision, truncated to `u64` which is sufficient
+/// for fingerprinting purposes (wraps every ~584 years).
 #[must_use]
+#[allow(clippy::cast_possible_truncation)]
 pub fn mtime_nanos(t: std::time::SystemTime) -> u64 {
     t.duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -138,11 +145,10 @@ impl<T: Serialize + DeserializeOwned + Clone + Send> CacheStore<T> for MemCache<
         guard.clone()
     }
 
-    fn save(&self, fingerprint: u64, data: &T) -> anyhow::Result<()> {
-        let mut guard = self
-            .data
-            .lock()
-            .map_err(|e| anyhow::anyhow!("MemCache mutex poisoned: {e}"))?;
+    fn save(&self, fingerprint: u64, data: &T) -> Result<(), HayaiError> {
+        let mut guard = self.data.lock().map_err(|e| HayaiError::MutexPoisoned {
+            context: format!("MemCache: {e}"),
+        })?;
         *guard = Some((fingerprint, data.clone()));
         Ok(())
     }
@@ -169,18 +175,16 @@ impl Fingerprinter for FixedFingerprinter {
 pub fn resolve_cached<T: Serialize + DeserializeOwned>(
     cache: &dyn CacheStore<T>,
     fp: &dyn Fingerprinter,
-    resolve_fn: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
+    resolve_fn: impl FnOnce() -> Result<T, HayaiError>,
+) -> Result<T, HayaiError> {
     let current_fp = fp.fingerprint();
 
-    // Cache hit
-    if let Some((cached_fp, data)) = cache.load() {
-        if cached_fp == current_fp {
-            return Ok(data);
-        }
+    if let Some((cached_fp, data)) = cache.load()
+        && cached_fp == current_fp
+    {
+        return Ok(data);
     }
 
-    // Cache miss — resolve and save
     let data = resolve_fn()?;
     let _ = cache.save(current_fp, &data);
     Ok(data)
@@ -247,11 +251,18 @@ mod tests {
     fn resolve_cached_error_propagation() {
         let cache: MemCache<Vec<String>> = MemCache::empty();
         let fp = FixedFingerprinter(1);
-        let result: anyhow::Result<Vec<String>> = resolve_cached(&cache, &fp, || {
-            Err(anyhow::anyhow!("resolution failed"))
+        let result: Result<Vec<String>, HayaiError> = resolve_cached(&cache, &fp, || {
+            Err(HayaiError::MutexPoisoned {
+                context: "resolution failed".into(),
+            })
         });
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("resolution failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("resolution failed")
+        );
         assert!(cache.load().is_none());
     }
 
