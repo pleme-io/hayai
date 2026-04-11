@@ -1233,6 +1233,459 @@ mod tests {
         assert!(matcher.check("rm -rf /").is_empty());
     }
 
+    // ── Normalizer edge cases ────────────────────────────────────
+
+    #[test]
+    fn identity_normalizer_empty_string() {
+        let n = IdentityNormalizer;
+        let result = n.normalize("");
+        assert!(matches!(result, Cow::Borrowed("")));
+        assert_eq!(&*result, "");
+    }
+
+    #[test]
+    fn identity_normalizer_unicode() {
+        let n = IdentityNormalizer;
+        let input = "日本語テスト 🚀 café";
+        let result = n.normalize(input);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, input);
+    }
+
+    #[test]
+    fn identity_normalizer_very_long_string() {
+        let n = IdentityNormalizer;
+        let input = "a".repeat(100_000);
+        let result = n.normalize(&input);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result.len(), 100_000);
+    }
+
+    #[test]
+    fn path_normalizer_empty_string() {
+        let n = PathNormalizer;
+        let result = n.normalize("");
+        assert!(matches!(result, Cow::Borrowed("")));
+    }
+
+    #[test]
+    fn path_normalizer_unicode_no_path() {
+        let n = PathNormalizer;
+        let input = "café résumé naïve";
+        let result = n.normalize(input);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, input);
+    }
+
+    #[test]
+    fn path_normalizer_only_path_prefix() {
+        let n = PathNormalizer;
+        let result = n.normalize("/usr/bin/");
+        assert_eq!(&*result, "");
+    }
+
+    #[test]
+    fn path_normalizer_bin_prefix() {
+        let n = PathNormalizer;
+        assert_eq!(&*n.normalize("/bin/ls"), "ls");
+    }
+
+    // ── ChainedNormalizer edge cases ─────────────────────────────
+
+    #[test]
+    fn chained_normalizer_empty_input() {
+        let n = ChainedNormalizer {
+            first: PathNormalizer,
+            second: FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
+        };
+        let result = n.normalize("");
+        assert_eq!(&*result, "");
+    }
+
+    #[test]
+    fn chained_normalizer_second_returns_borrowed_after_first_owned() {
+        // First transforms (Owned), second returns Borrowed (no-op).
+        // The chained normalizer should still return Owned from first.
+        let n = ChainedNormalizer {
+            first: PathNormalizer,
+            second: IdentityNormalizer,
+        };
+        let result = n.normalize("/usr/bin/cmd");
+        assert_eq!(&*result, "cmd");
+        // PathNormalizer produces Owned, IdentityNormalizer borrows from it,
+        // but ChainedNormalizer must return the Owned string.
+        assert!(matches!(result, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn chained_normalizer_fn_trim_then_uppercase() {
+        let n = ChainedNormalizer {
+            first: FnNormalizer::new(|s| {
+                let trimmed = s.trim();
+                if trimmed.len() == s.len() {
+                    Cow::Borrowed(s)
+                } else {
+                    Cow::Owned(trimmed.to_string())
+                }
+            }),
+            second: FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
+        };
+        assert_eq!(&*n.normalize("  hello  "), "HELLO");
+    }
+
+    // ── FnNormalizer edge cases ──────────────────────────────────
+
+    #[test]
+    fn fn_normalizer_trim_whitespace() {
+        let n = FnNormalizer::new(|s| {
+            let trimmed = s.trim();
+            if trimmed.len() == s.len() {
+                Cow::Borrowed(s)
+            } else {
+                Cow::Owned(trimmed.to_string())
+            }
+        });
+        assert_eq!(&*n.normalize("  hello  "), "hello");
+        // No whitespace — should borrow
+        let result = n.normalize("hello");
+        assert!(matches!(result, Cow::Borrowed("hello")));
+    }
+
+    #[test]
+    fn fn_normalizer_replace_pattern() {
+        let n = FnNormalizer::new(|s| {
+            if s.contains("sudo") {
+                Cow::Owned(s.replace("sudo ", ""))
+            } else {
+                Cow::Borrowed(s)
+            }
+        });
+        assert_eq!(&*n.normalize("sudo rm -rf /"), "rm -rf /");
+        assert_eq!(&*n.normalize("ls -la"), "ls -la");
+    }
+
+    // ── FnPrefilter edge cases ───────────────────────────────────
+
+    #[test]
+    fn fn_prefilter_length_based() {
+        // Safe if input is short (< 5 chars)
+        let p = FnPrefilter(|s: &str| s.len() < 5);
+        assert!(p.is_safe("hi"));
+        assert!(p.is_safe(""));
+        assert!(!p.is_safe("hello world"));
+    }
+
+    #[test]
+    fn fn_prefilter_empty_input() {
+        let p = FnPrefilter(|s: &str| s.is_empty());
+        assert!(p.is_safe(""));
+        assert!(!p.is_safe("x"));
+    }
+
+    #[test]
+    fn fn_prefilter_in_composite() {
+        let composite = CompositePrefilter {
+            first: FnPrefilter(|s: &str| s.starts_with("safe_")),
+            second: FnPrefilter(|s: &str| s.len() < 100),
+        };
+        assert!(composite.is_safe("safe_short"));
+        assert!(!composite.is_safe("dangerous_short"));
+        assert!(!composite.is_safe(&format!("safe_{}", "x".repeat(100))));
+    }
+
+    // ── KeywordPrefilter edge cases ──────────────────────────────
+
+    #[test]
+    fn keyword_prefilter_single_byte_keyword() {
+        let p = KeywordPrefilter::new([b"X".to_vec()]);
+        assert!(!p.is_safe("exec"));
+        assert!(!p.is_safe("EXEC"));
+        assert!(p.is_safe("hello"));
+    }
+
+    #[test]
+    fn keyword_prefilter_keyword_at_start() {
+        let p = KeywordPrefilter::new([b"DROP".to_vec()]);
+        assert!(!p.is_safe("DROP TABLE users"));
+    }
+
+    #[test]
+    fn keyword_prefilter_keyword_at_end() {
+        let p = KeywordPrefilter::new([b"DROP".to_vec()]);
+        assert!(!p.is_safe("please DROP"));
+    }
+
+    #[test]
+    fn keyword_prefilter_multiple_keywords() {
+        let p = KeywordPrefilter::new([
+            b"DROP".to_vec(),
+            b"DELETE".to_vec(),
+            b"TRUNCATE".to_vec(),
+        ]);
+        assert!(!p.is_safe("delete from users"));
+        assert!(!p.is_safe("truncate table"));
+        assert!(p.is_safe("select * from users"));
+    }
+
+    // ── PrefixPrefilter edge cases ───────────────────────────────
+
+    #[test]
+    fn prefix_prefilter_whitespace_only_input() {
+        let p = PrefixPrefilter::new(["rm"], 3);
+        assert!(p.is_safe("   "));
+    }
+
+    #[test]
+    fn prefix_prefilter_single_word_input() {
+        let p = PrefixPrefilter::new(["rm"], 3);
+        assert!(!p.is_safe("rm"));
+        assert!(p.is_safe("ls"));
+    }
+
+    #[test]
+    fn prefix_prefilter_max_words_one() {
+        let p = PrefixPrefilter::new(["git"], 1);
+        assert!(!p.is_safe("git push"));
+        assert!(p.is_safe("cargo git push")); // "git" is second word
+    }
+
+    // ── RegexMatcher combined normalizer + prefilter ─────────────
+
+    #[test]
+    fn matcher_normalizer_plus_prefilter_pipeline() {
+        let patterns = vec![r"^rm\s+-rf".to_string()];
+        let matcher = RegexMatcher::with_plugins(
+            &patterns,
+            PathNormalizer,
+            PrefixPrefilter::new(["rm"], 3),
+        )
+        .unwrap();
+        // Path normalized then prefilter checks — "rm" is dangerous prefix
+        // so prefilter does NOT skip, and regex matches
+        // BUT: the prefilter sees the RAW normalized output. Let's check:
+        // Input: "/usr/bin/rm -rf /" → normalized to "rm -rf /"
+        // Prefilter sees "rm -rf /" → prefix "rm" matches → NOT safe → DFA runs → match
+        assert_eq!(matcher.check("/usr/bin/rm -rf /"), vec![0]);
+
+        // Input: "ls -la" → normalized to "ls -la"
+        // Prefilter sees "ls -la" → no prefix match → safe → skip DFA
+        assert!(matcher.check("ls -la").is_empty());
+    }
+
+    #[test]
+    fn matcher_fn_normalizer_plus_fn_prefilter() {
+        let patterns = vec![r"DANGER".to_string()];
+        let matcher = RegexMatcher::with_plugins(
+            &patterns,
+            FnNormalizer::new(|s| Cow::Owned(s.to_uppercase())),
+            FnPrefilter(|s: &str| !s.contains("DANGER")),
+        )
+        .unwrap();
+        // "this is danger" → normalized to "THIS IS DANGER"
+        // Prefilter: "THIS IS DANGER" contains "DANGER" → not safe → DFA → match
+        assert_eq!(matcher.check("this is danger"), vec![0]);
+        // "hello" → "HELLO" → prefilter: no DANGER → safe → skip
+        assert!(matcher.check("hello").is_empty());
+    }
+
+    #[test]
+    fn matcher_case_insensitive_pattern() {
+        let patterns = vec![r"(?i)drop\s+table".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        assert_eq!(matcher.check("DROP TABLE users"), vec![0]);
+        assert_eq!(matcher.check("drop table users"), vec![0]);
+        assert_eq!(matcher.check("Drop Table users"), vec![0]);
+    }
+
+    #[test]
+    fn matcher_overlapping_patterns() {
+        let patterns = vec![
+            r"rm".to_string(),
+            r"rm\s+-rf".to_string(),
+            r"rm\s+-rf\s+/".to_string(),
+        ];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        let matches = matcher.check("rm -rf /");
+        assert_eq!(matches, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn matcher_single_char_patterns() {
+        let patterns = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        assert_eq!(matcher.check("a"), vec![0]);
+        assert_eq!(matcher.check("abc"), vec![0, 1, 2]);
+        assert!(matcher.check("xyz").is_empty());
+    }
+
+    #[test]
+    fn matcher_anchored_patterns_no_false_positives() {
+        let patterns = vec![r"^rm\b".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        assert_eq!(matcher.check("rm -rf /"), vec![0]);
+        assert!(matcher.check("cargo rm -rf /").is_empty()); // rm not at start
+    }
+
+    #[test]
+    fn matcher_very_long_input() {
+        let patterns = vec![r"needle".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        let long_input = format!("{}needle{}", "a".repeat(50_000), "b".repeat(50_000));
+        assert_eq!(matcher.check(&long_input), vec![0]);
+    }
+
+    #[test]
+    fn matcher_all_patterns_match() {
+        let patterns = vec![r"a".to_string(), r"b".to_string(), r"c".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        assert_eq!(matcher.check("abc"), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn matcher_prefilter_skips_all() {
+        // Always-safe prefilter means DFA never runs
+        let patterns = vec![r"rm\s+-rf".to_string()];
+        let matcher = RegexMatcher::with_plugins(
+            &patterns,
+            IdentityNormalizer,
+            FnPrefilter(|_: &str| true), // always safe
+        )
+        .unwrap();
+        // Even though "rm -rf /" would match the regex, prefilter skips it
+        assert!(matcher.check("rm -rf /").is_empty());
+    }
+
+    #[test]
+    fn matcher_with_mock_normalizer() {
+        let patterns = vec![r"HELLO".to_string()];
+        let matcher = RegexMatcher::with_plugins(
+            &patterns,
+            MockNormalizer::with_transform(|s| s.to_uppercase()),
+            NullPrefilter,
+        )
+        .unwrap();
+        assert_eq!(matcher.check("hello"), vec![0]);
+    }
+
+    #[test]
+    fn matcher_with_mock_prefilter_safe() {
+        let patterns = vec![r"rm".to_string()];
+        let matcher = RegexMatcher::with_plugins(
+            &patterns,
+            IdentityNormalizer,
+            MockPrefilter { always_safe: true },
+        )
+        .unwrap();
+        assert!(matcher.check("rm -rf /").is_empty());
+    }
+
+    // ── MatchResult edge cases ───────────────────────────────────
+
+    #[test]
+    fn match_result_single_match() {
+        let r = MatchResult::from(vec![42]);
+        assert!(!r.is_empty());
+        assert!(r.matched_any());
+        assert_eq!(r.first(), Some(42));
+        assert_eq!(r.len(), 1);
+        assert!(r.contains(42));
+        assert!(!r.contains(0));
+    }
+
+    #[test]
+    fn match_result_contains_all_indices() {
+        let r = MatchResult::from(vec![0, 5, 10, 15, 20]);
+        for &i in &[0, 5, 10, 15, 20] {
+            assert!(r.contains(i));
+        }
+        for &i in &[1, 2, 3, 4, 6, 11, 21] {
+            assert!(!r.contains(i));
+        }
+    }
+
+    #[test]
+    fn match_result_display_single() {
+        let r = MatchResult::from(vec![0]);
+        let display = format!("{r}");
+        assert!(display.contains("1 match(es)"));
+    }
+
+    #[test]
+    fn match_result_iter_empty() {
+        let r = MatchResult::default();
+        assert_eq!(r.iter().count(), 0);
+    }
+
+    #[test]
+    fn match_result_into_iter_ref_preserves_original() {
+        let r = MatchResult::from(vec![1, 2, 3]);
+        let _ = (&r).into_iter().count();
+        // r is still usable
+        assert_eq!(r.len(), 3);
+    }
+
+    // ── MockMatchEngine edge cases ───────────────────────────────
+
+    #[test]
+    fn mock_match_engine_clone() {
+        let mock = MockMatchEngine::new(vec![1, 2], 5);
+        let cloned = mock.clone();
+        assert_eq!(cloned.check("x"), vec![1, 2]);
+        assert_eq!(cloned.pattern_count(), 5);
+    }
+
+    #[test]
+    fn mock_match_engine_zero_patterns() {
+        let mock = MockMatchEngine::empty(0);
+        assert!(mock.check("anything").is_empty());
+        assert_eq!(mock.pattern_count(), 0);
+    }
+
+    // ── CompositePrefilter with FnPrefilter ──────────────────────
+
+    #[test]
+    fn composite_fn_prefilters() {
+        let composite = CompositePrefilter {
+            first: FnPrefilter(|s: &str| !s.contains("rm")),
+            second: FnPrefilter(|s: &str| !s.contains("sudo")),
+        };
+        assert!(composite.is_safe("ls -la"));
+        assert!(!composite.is_safe("rm -rf /"));
+        assert!(!composite.is_safe("sudo ls"));
+        assert!(!composite.is_safe("sudo rm -rf /"));
+    }
+
+    // ── MatchEngine trait object tests ───────────────────────────
+
+    #[test]
+    fn match_engine_trait_object_usage() {
+        let patterns = vec![r"test".to_string()];
+        let matcher = RegexMatcher::new(&patterns).unwrap();
+        // Use as dyn MatchEngine
+        let engine: &dyn MatchEngine = &matcher;
+        assert_eq!(engine.check("this is a test"), vec![0]);
+        assert_eq!(engine.pattern_count(), 1);
+    }
+
+    // ── contains_ascii_ci additional tests ───────────────────────
+
+    #[test]
+    fn contains_ascii_ci_exact_match() {
+        assert!(contains_ascii_ci(b"DROP", b"DROP"));
+    }
+
+    #[test]
+    fn contains_ascii_ci_needle_longer_than_haystack() {
+        assert!(!contains_ascii_ci(b"DR", b"DROP"));
+    }
+
+    #[test]
+    fn contains_ascii_ci_single_char() {
+        assert!(contains_ascii_ci(b"hello", b"H"));
+        assert!(contains_ascii_ci(b"hello", b"E"));
+        assert!(!contains_ascii_ci(b"hello", b"X"));
+    }
+
     // ── proptest ──────────────────────────────────────────────────
 
     mod proptests {
