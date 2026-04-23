@@ -390,7 +390,7 @@ impl<F> fmt::Debug for FnPrefilter<F> {
 /// `needle` must be uppercase ASCII bytes.
 #[inline]
 #[must_use]
-pub(crate) fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
+pub fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
     let n = needle.len();
     if n == 0 {
         return true;
