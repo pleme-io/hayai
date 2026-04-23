@@ -20,7 +20,7 @@ pub mod error;
 pub use cache::{CacheStore, FixedFingerprinter, Fingerprinter, MemCache, resolve_cached};
 pub use engine::{
     ChainedNormalizer, CompositePrefilter, FnNormalizer, FnPrefilter, IdentityNormalizer,
-    KeywordPrefilter, MatchResult, Normalizer,
+    KeywordPrefilter, MatchEngine, MatchResult, Normalizer,
     NullPrefilter, PathNormalizer, Prefilter, RegexMatcher, contains_ascii_ci,
 };
 pub use error::HayaiError;
