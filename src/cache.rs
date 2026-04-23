@@ -7,8 +7,6 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::HayaiError;
 
-pub use crate::error::HayaiError;
-
 /// Trait for cache storage — abstracts filesystem for testability.
 ///
 /// Generic over the cached data type. `Send + Sync` required for daemon use.

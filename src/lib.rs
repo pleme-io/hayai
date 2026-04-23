@@ -17,6 +17,6 @@ pub mod cache;
 pub mod engine;
 pub mod error;
 
-pub use cache::*;
+pub use cache::{CacheStore, FixedFingerprinter, Fingerprinter, MemCache, resolve_cached, HayaiError};
 pub use engine::*;
 pub use error::*;
