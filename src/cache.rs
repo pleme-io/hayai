@@ -273,8 +273,10 @@ mod tests {
     fn cache_miss_resolves_and_saves() {
         let cache = MemCache::empty();
         let fp = FixedFingerprinter(42);
-        let data: Vec<String> =
-            resolve_cached(&cache, &fp, || Ok(vec!["test".to_string()])).unwrap();
+        let data: Vec<String> = resolve_cached(&cache, &fp, || {
+            Ok::<_, HayaiError>(vec!["test".to_string()])
+        })
+        .unwrap();
         assert_eq!(data.len(), 1);
         assert!(cache.load().is_some());
         assert_eq!(cache.load().unwrap().0, 42);
@@ -285,7 +287,7 @@ mod tests {
         let cache = MemCache::empty();
         let fp = FixedFingerprinter(42);
         cache.save(42, &vec!["cached".to_string()]).unwrap();
-        let data: Vec<String> = resolve_cached(&cache, &fp, || {
+        let data: Vec<String> = resolve_cached(&cache, &fp, || -> Result<_, HayaiError> {
             panic!("should not be called on cache hit");
         })
         .unwrap();
@@ -297,8 +299,10 @@ mod tests {
         let cache = MemCache::empty();
         let fp = FixedFingerprinter(99);
         cache.save(42, &vec!["old".to_string()]).unwrap();
-        let data: Vec<String> =
-            resolve_cached(&cache, &fp, || Ok(vec!["new".to_string()])).unwrap();
+        let data: Vec<String> = resolve_cached(&cache, &fp, || {
+            Ok::<_, HayaiError>(vec!["new".to_string()])
+        })
+        .unwrap();
         assert_eq!(data, vec!["new"]);
         assert_eq!(cache.load().unwrap().0, 99);
     }
@@ -345,12 +349,14 @@ mod tests {
     fn resolve_cached_multiple_misses_update_fingerprint() {
         let cache: MemCache<Vec<String>> = MemCache::empty();
         let fp1 = FixedFingerprinter(1);
-        let data = resolve_cached(&cache, &fp1, || Ok(vec!["v1".to_string()])).unwrap();
+        let data = resolve_cached(&cache, &fp1, || Ok::<_, HayaiError>(vec!["v1".to_string()]))
+            .unwrap();
         assert_eq!(data, vec!["v1"]);
         assert_eq!(cache.load().unwrap().0, 1);
 
         let fp2 = FixedFingerprinter(2);
-        let data = resolve_cached(&cache, &fp2, || Ok(vec!["v2".to_string()])).unwrap();
+        let data = resolve_cached(&cache, &fp2, || Ok::<_, HayaiError>(vec!["v2".to_string()]))
+            .unwrap();
         assert_eq!(data, vec!["v2"]);
         assert_eq!(cache.load().unwrap().0, 2);
     }
@@ -500,12 +506,16 @@ mod tests {
             path: dir.path().join("cache.json"),
         };
         let fp = FixedFingerprinter(100);
-        let data: Vec<String> =
-            resolve_cached(&cache, &fp, || Ok(vec!["resolved".to_string()])).unwrap();
+        let data: Vec<String> = resolve_cached(&cache, &fp, || {
+            Ok::<_, HayaiError>(vec!["resolved".to_string()])
+        })
+        .unwrap();
         assert_eq!(data, vec!["resolved"]);
 
-        let data2: Vec<String> =
-            resolve_cached(&cache, &fp, || panic!("should not resolve again")).unwrap();
+        let data2: Vec<String> = resolve_cached(&cache, &fp, || -> Result<_, HayaiError> {
+            panic!("should not resolve again")
+        })
+        .unwrap();
         assert_eq!(data2, vec!["resolved"]);
     }
 
@@ -557,7 +567,8 @@ mod tests {
     fn resolve_cached_with_failing_save_still_returns_data() {
         let store: MockCacheStore<Vec<String>> = MockCacheStore::failing();
         let fp = FixedFingerprinter(1);
-        let data = resolve_cached(&store, &fp, || Ok(vec!["ok".into()])).unwrap();
+        let data =
+            resolve_cached(&store, &fp, || Ok::<_, HayaiError>(vec!["ok".into()])).unwrap();
         assert_eq!(data, vec!["ok"]);
         assert!(store.load().is_none());
     }
