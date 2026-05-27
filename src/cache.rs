@@ -189,13 +189,24 @@ impl Fingerprinter for FixedFingerprinter {
 /// Resolve data with caching. Try cache first, fall back to resolver
 /// function, auto-populate cache on miss.
 ///
+/// Generic over the resolver's error type so consumers using anyhow,
+/// custom error enums, or other error wrappers can pass their own
+/// closures without an outer .map_err. Hayai's own errors lift in via
+/// the `From<HayaiError>` bound.
+///
 /// # Errors
-/// Returns an error if the resolve function fails.
-pub fn resolve_cached<T: Serialize + DeserializeOwned>(
+/// Returns an error if the resolve function fails or a cache op produces
+/// a HayaiError that converts into `E`.
+pub fn resolve_cached<T, E, F>(
     cache: &dyn CacheStore<T>,
     fp: &dyn Fingerprinter,
-    resolve_fn: impl FnOnce() -> Result<T, HayaiError>,
-) -> Result<T, HayaiError> {
+    resolve_fn: F,
+) -> Result<T, E>
+where
+    T: Serialize + DeserializeOwned,
+    E: From<HayaiError>,
+    F: FnOnce() -> Result<T, E>,
+{
     let current_fp = fp.fingerprint();
 
     if let Some((cached_fp, data)) = cache.load()
