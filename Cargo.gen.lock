@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "31da9dca516390c9f55530c1883837af30f84d7b4a74b50b070c78a3483126dd",
+  "cargo_lock_sha256": "d424e3a0195da4250485d9b749d1c756170030a45d656eb3ee647cb9c8932d2f",
   "manifest_sha256": {
-    "Cargo.toml": "a2921776f688df3ac447ded8e00671c2bf31b84f7c12fe4cf985bae744934a53"
+    "Cargo.toml": "994036ea9c97d00a158f421dfca5b78caa7796cb27ef5d9e295b8996c662c427"
   },
   "target_resolves": {
     "base": {
@@ -21,6 +21,7 @@
         ],
         "build_dependencies": [],
         "features": [
+          "default",
           "perf-literal",
           "std"
         ]
@@ -331,8 +332,28 @@
       "hayai-0.1.2": {
         "runtime_dependencies": [
           {
+            "name": "aho_corasick",
+            "package_key": "aho-corasick-1.1.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "regex",
             "package_key": "regex-1.13.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "regex_syntax",
+            "package_key": "regex-syntax-0.8.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,

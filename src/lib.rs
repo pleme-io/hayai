@@ -16,6 +16,7 @@
 pub mod cache;
 pub mod engine;
 pub mod error;
+pub mod literal;
 
 pub use cache::{CacheStore, FixedFingerprinter, Fingerprinter, MemCache, resolve_cached};
 pub use engine::{
@@ -24,3 +25,4 @@ pub use engine::{
     NullPrefilter, PathNormalizer, Prefilter, RegexMatcher, contains_ascii_ci,
 };
 pub use error::HayaiError;
+pub use literal::{LazyRegexMatcher, LiteralIndex, Needles};

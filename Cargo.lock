@@ -105,10 +105,12 @@ dependencies = [
 name = "hayai"
 version = "0.1.2"
 dependencies = [
+ "aho-corasick",
  "assert_matches",
  "pretty_assertions",
  "proptest",
  "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "tempfile",
