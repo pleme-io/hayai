@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "07aee5dbd1dddedc53bbbb6a28af6220740c2ae66a3ac328a71054d50eb3a323",
+  "cargo_lock_sha256": "37fa6fd2a87a4a36768c932fb5d9afc29f3730fbcf207916d9f3837165b6dfce",
   "manifest_sha256": {
-    "Cargo.toml": "219e875a7345ac36c97fb8d648b69e7822a468e16331005af4f525b8300c68b2"
+    "Cargo.toml": "88ba10d2b5e578030b1a7c58626c9ca003617c19b3b1a594f527d67e4982e237"
   },
   "target_resolves": {
     "base": {
@@ -365,7 +365,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "hayai-0.1.3": {
+      "hayai-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "aho_corasick",
@@ -2324,7 +2324,7 @@
     "hashbrown-0.17.1": {
       "edition": "2024"
     },
-    "hayai-0.1.3": {
+    "hayai-0.1.4": {
       "edition": "2024",
       "lib_target": {
         "name": "hayai",
