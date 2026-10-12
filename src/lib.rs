@@ -18,11 +18,11 @@ pub mod engine;
 pub mod error;
 pub mod literal;
 
-pub use cache::{CacheStore, FixedFingerprinter, Fingerprinter, MemCache, resolve_cached};
+pub use cache::{CacheStore, Fingerprinter, FixedFingerprinter, MemCache, resolve_cached};
 pub use engine::{
     ChainedNormalizer, CompositePrefilter, FnNormalizer, FnPrefilter, IdentityNormalizer,
-    KeywordPrefilter, MatchEngine, MatchResult, Normalizer,
-    NullPrefilter, PathNormalizer, Prefilter, RegexMatcher, contains_ascii_ci,
+    KeywordPrefilter, MatchEngine, MatchResult, Normalizer, NullPrefilter, PathNormalizer,
+    Prefilter, RegexMatcher, contains_ascii_ci,
 };
 pub use error::HayaiError;
 pub use literal::{LazyRegexMatcher, LiteralIndex, Needles};

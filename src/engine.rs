@@ -169,10 +169,8 @@ impl Normalizer for IdentityNormalizer {
 // `OnceLock` with a fallible init would let us remove the `unwrap`.
 #[allow(clippy::unwrap_used)]
 static PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(
-        r"(?:/nix/store/[a-z0-9]+-[^/]+/bin/|/usr/local/bin/|/usr/bin/|/bin/|/sbin/)",
-    )
-    .unwrap()
+    regex::Regex::new(r"(?:/nix/store/[a-z0-9]+-[^/]+/bin/|/usr/local/bin/|/usr/bin/|/bin/|/sbin/)")
+        .unwrap()
 });
 
 /// Strips absolute path prefixes from inputs:
@@ -264,13 +262,10 @@ impl PrefixPrefilter {
 
 impl Prefilter for PrefixPrefilter {
     fn is_safe(&self, input: &str) -> bool {
-        !input
-            .split_whitespace()
-            .take(self.max_words)
-            .any(|word| {
-                self.prefixes.contains(word)
-                    || self.prefixes.iter().any(|p| word.starts_with(p.as_str()))
-            })
+        !input.split_whitespace().take(self.max_words).any(|word| {
+            self.prefixes.contains(word)
+                || self.prefixes.iter().any(|p| word.starts_with(p.as_str()))
+        })
     }
 }
 
@@ -398,9 +393,11 @@ pub fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
     if haystack.len() < n {
         return false;
     }
-    haystack
-        .windows(n)
-        .any(|w| w.iter().zip(needle).all(|(a, b)| a.to_ascii_uppercase() == *b))
+    haystack.windows(n).any(|w| {
+        w.iter()
+            .zip(needle)
+            .all(|(a, b)| a.to_ascii_uppercase() == *b)
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -447,11 +444,7 @@ impl<N: Normalizer, P: Prefilter> RegexMatcher<N, P> {
     ///
     /// # Errors
     /// Returns [`HayaiError::InvalidPattern`] if any regex pattern is invalid.
-    pub fn with_plugins<I, S>(
-        patterns: I,
-        normalizer: N,
-        prefilter: P,
-    ) -> Result<Self, HayaiError>
+    pub fn with_plugins<I, S>(patterns: I, normalizer: N, prefilter: P) -> Result<Self, HayaiError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -741,8 +734,7 @@ mod tests {
     #[test]
     fn matcher_with_path_normalizer() {
         let patterns = vec![r"^rm\s+-rf".to_string()];
-        let matcher =
-            RegexMatcher::with_plugins(&patterns, PathNormalizer, NullPrefilter).unwrap();
+        let matcher = RegexMatcher::with_plugins(&patterns, PathNormalizer, NullPrefilter).unwrap();
         let matches = matcher.check("/usr/bin/rm -rf /");
         assert_eq!(matches, vec![0]);
     }
@@ -1057,8 +1049,7 @@ mod tests {
             first: PrefixPrefilter::new(["rm", "psql"], 3),
             second: KeywordPrefilter::new([b"DROP ".to_vec()]),
         };
-        let matcher =
-            RegexMatcher::with_plugins(&patterns, IdentityNormalizer, composite).unwrap();
+        let matcher = RegexMatcher::with_plugins(&patterns, IdentityNormalizer, composite).unwrap();
         assert!(matcher.check("ls -la").is_empty());
         assert_eq!(matcher.check("rm -rf /"), vec![0]);
         assert_eq!(matcher.check("echo DROP TABLE users"), vec![1]);
@@ -1417,11 +1408,7 @@ mod tests {
 
     #[test]
     fn keyword_prefilter_multiple_keywords() {
-        let p = KeywordPrefilter::new([
-            b"DROP".to_vec(),
-            b"DELETE".to_vec(),
-            b"TRUNCATE".to_vec(),
-        ]);
+        let p = KeywordPrefilter::new([b"DROP".to_vec(), b"DELETE".to_vec(), b"TRUNCATE".to_vec()]);
         assert!(!p.is_safe("delete from users"));
         assert!(!p.is_safe("truncate table"));
         assert!(p.is_safe("select * from users"));
@@ -1454,12 +1441,9 @@ mod tests {
     #[test]
     fn matcher_normalizer_plus_prefilter_pipeline() {
         let patterns = vec![r"^rm\s+-rf".to_string()];
-        let matcher = RegexMatcher::with_plugins(
-            &patterns,
-            PathNormalizer,
-            PrefixPrefilter::new(["rm"], 3),
-        )
-        .unwrap();
+        let matcher =
+            RegexMatcher::with_plugins(&patterns, PathNormalizer, PrefixPrefilter::new(["rm"], 3))
+                .unwrap();
         // Path normalized then prefilter checks — "rm" is dangerous prefix
         // so prefilter does NOT skip, and regex matches
         // BUT: the prefilter sees the RAW normalized output. Let's check:

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::{env, fs};
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::error::HayaiError;
 
@@ -299,10 +299,8 @@ mod tests {
         let cache = MemCache::empty();
         let fp = FixedFingerprinter(99);
         cache.save(42, &vec!["old".to_string()]).unwrap();
-        let data: Vec<String> = resolve_cached(&cache, &fp, || {
-            Ok::<_, HayaiError>(vec!["new".to_string()])
-        })
-        .unwrap();
+        let data: Vec<String> =
+            resolve_cached(&cache, &fp, || Ok::<_, HayaiError>(vec!["new".to_string()])).unwrap();
         assert_eq!(data, vec!["new"]);
         assert_eq!(cache.load().unwrap().0, 99);
     }
@@ -349,14 +347,14 @@ mod tests {
     fn resolve_cached_multiple_misses_update_fingerprint() {
         let cache: MemCache<Vec<String>> = MemCache::empty();
         let fp1 = FixedFingerprinter(1);
-        let data = resolve_cached(&cache, &fp1, || Ok::<_, HayaiError>(vec!["v1".to_string()]))
-            .unwrap();
+        let data =
+            resolve_cached(&cache, &fp1, || Ok::<_, HayaiError>(vec!["v1".to_string()])).unwrap();
         assert_eq!(data, vec!["v1"]);
         assert_eq!(cache.load().unwrap().0, 1);
 
         let fp2 = FixedFingerprinter(2);
-        let data = resolve_cached(&cache, &fp2, || Ok::<_, HayaiError>(vec!["v2".to_string()]))
-            .unwrap();
+        let data =
+            resolve_cached(&cache, &fp2, || Ok::<_, HayaiError>(vec!["v2".to_string()])).unwrap();
         assert_eq!(data, vec!["v2"]);
         assert_eq!(cache.load().unwrap().0, 2);
     }
@@ -567,8 +565,7 @@ mod tests {
     fn resolve_cached_with_failing_save_still_returns_data() {
         let store: MockCacheStore<Vec<String>> = MockCacheStore::failing();
         let fp = FixedFingerprinter(1);
-        let data =
-            resolve_cached(&store, &fp, || Ok::<_, HayaiError>(vec!["ok".into()])).unwrap();
+        let data = resolve_cached(&store, &fp, || Ok::<_, HayaiError>(vec!["ok".into()])).unwrap();
         assert_eq!(data, vec!["ok"]);
         assert!(store.load().is_none());
     }
